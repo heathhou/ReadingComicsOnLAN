@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>阅读器</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="reader-page">
+    <div class="reader-container">
+        <div id="image-container"></div>
+    </div>
+
+    <!-- 水平模式的导航 (仅包含隐藏的按钮) -->
+    <div id="horizontal-nav" style="display: none;">
+        <button id="prev-button" class="nav-button">‹</button>
+        <button id="next-button" class="nav-button">›</button>
+    </div>
+
+    <!-- 点击显示的底部信息栏 -->
+    <div id="reader-overlay">
+        <div id="page-indicator" class="page-indicator">
+            <span id="page-text"></span>
+            <div id="page-input-container" style="display: none;">
+                <input type="number" id="page-input" class="page-input-field">
+                <span class="page-total-slash">/</span>
+                <span id="page-total"></span>
+            </div>
+        </div>
+        <div class="progress-container">
+            <div id="progress-bar"></div>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            const imageContainer = document.getElementById('image-container');
+            const horizontalNav = document.getElementById('horizontal-nav');
+            const prevButton = document.getElementById('prev-button');
+            const nextButton = document.getElementById('next-button');
+            const readerOverlay = document.getElementById('reader-overlay');
+            const pageIndicator = document.getElementById('page-indicator');
+            const pageText = document.getElementById('page-text');
+            const pageInputContainer = document.getElementById('page-input-container');
+            const pageInput = document.getElementById('page-input');
+            const pageTotal = document.getElementById('page-total');
+            const progressBar = document.getElementById('progress-bar');
+            const progressContainer = document.querySelector('.progress-container');
+
+            const urlParams = new URLSearchParams(window.location.search);
+            const path = urlParams.get('path');
+            const mode = urlParams.get('mode'); // 'vertical' or 'horizontal'
+            const subfolders = urlParams.get('subfolders');
+
+            document.title = `${decodeURIComponent(path)} - 阅读器`;
+
+            // 点击切换信息栏
+            imageContainer.addEventListener('click', () => {
+                readerOverlay.classList.toggle('visible');
+            });
+
+            function updateOverlay(currentIndex, totalImages) {
+                if (totalImages > 0) {
+                    pageText.textContent = `${currentIndex + 1} / ${totalImages}`;
+                    progressBar.style.width = `${((currentIndex + 1) / totalImages) * 100}%`;
+                }
+            }
+
+            async function fetchImages() {
+                try {
+                    const response = await fetch(`/api/images?path=${encodeURIComponent(path)}&subfolders=${subfolders}`);
+                    if (!response.ok) {
+                        throw new Error('无法加载图片');
+                    }
+                    const images = await response.json();
+                    if(images.length === 0){
+                        imageContainer.innerHTML = '<p>没有找到可以阅读的图片。</p>';
+                        return;
+                    }
+                    if (mode === 'vertical') {
+                        setupVerticalMode(images);
+                    } else {
+                        setupHorizontalMode(images);
+                    }
+                } catch (error) {
+                    imageContainer.innerHTML = `<p>${error.message}</p>`;
+                }
+            }
+
+            function setupVerticalMode(images) {
+                imageContainer.className = 'vertical';
+                
+                let imageElements = [];
+                images.forEach(imagePath => {
+                    const img = document.createElement('img');
+                    img.src = `/comics/${encodeURIComponent(imagePath)}`;
+                    imageContainer.appendChild(img);
+                    imageElements.push(img);
+                });
+
+                // 使用IntersectionObserver来确定当前页码
+                let currentImageIndex = 0;
+                const observer = new IntersectionObserver((entries) => {
+                    entries.forEach(entry => {
+                        if (entry.isIntersecting) {
+                            const intersectingIndex = imageElements.findIndex(img => img === entry.target);
+                            if (intersectingIndex !== -1) {
+                                currentImageIndex = intersectingIndex;
+                                pageText.textContent = `${currentImageIndex + 1} / ${images.length}`;
+                            }
+                        }
+                    });
+                }, { threshold: 0.5 }); // 当图片50%可见时触发
+
+                imageElements.forEach(img => observer.observe(img));
+
+                // 使用scroll事件来更新进度条
+                window.addEventListener('scroll', () => {
+                    const scrollHeight = document.documentElement.scrollHeight - window.innerHeight;
+                    const scrollTop = window.scrollY;
+                    const progress = scrollHeight > 0 ? (scrollTop / scrollHeight) * 100 : 0;
+                    progressBar.style.width = `${progress}%`;
+                }, { passive: true });
+                
+                // 进度条点击跳转
+                progressContainer.addEventListener('click', (e) => {
+                    const rect = progressContainer.getBoundingClientRect();
+                    const clickX = e.clientX - rect.left;
+                    const width = progressContainer.offsetWidth;
+                    const clickPercent = clickX / width;
+                    const targetIndex = Math.floor(clickPercent * images.length);
+                    const targetImage = imageElements[targetIndex];
+                    if (targetImage) {
+                        // 将目标图片平滑滚动到视图的顶部
+                        targetImage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                    }
+                });
+
+                // 页码点击跳转
+                pageIndicator.addEventListener('click', (e) => {
+                    // 防止点击输入框时触发上层容器的关闭事件
+                    e.stopPropagation(); 
+                    
+                    pageText.style.display = 'none';
+                    pageInputContainer.style.display = 'flex';
+                    pageTotal.textContent = images.length;
+                    pageInput.value = currentImageIndex + 1;
+                    pageInput.focus();
+                    pageInput.select();
+
+                    const handleJump = () => {
+                        let targetPage = parseInt(pageInput.value, 10);
+                        if (!isNaN(targetPage)) {
+                            targetPage = Math.max(1, Math.min(targetPage, images.length));
+                            const targetImage = imageElements[targetPage - 1];
+                            if (targetImage) {
+                                targetImage.scrollIntoView({ behavior: 'smooth', block: 'start' });
+                            }
+                        }
+                        pageInputContainer.style.display = 'none';
+                        pageText.style.display = 'block';
+                        pageInput.removeEventListener('blur', handleJump);
+                        pageInput.removeEventListener('keydown', handleKeydown);
+                    };
+
+                    const handleKeydown = (e) => {
+                        if (e.key === 'Enter') handleJump();
+                        if (e.key === 'Escape') {
+                            pageInputContainer.style.display = 'none';
+                            pageText.style.display = 'block';
+                            pageInput.removeEventListener('blur', handleJump);
+                            pageInput.removeEventListener('keydown', handleKeydown);
+                        }
+                    };
+
+                    pageInput.addEventListener('blur', handleJump);
+                    pageInput.addEventListener('keydown', handleKeydown);
+                });
+
+                updateOverlay(0, images.length);
+            }
+
+            function setupHorizontalMode(images) {
+                imageContainer.className = 'horizontal';
+                horizontalNav.style.display = 'block';
+
+                const track = document.createElement('div');
+                track.id = 'image-track';
+                imageContainer.appendChild(track);
+
+                // 创建所有幻灯片
+                images.forEach(imagePath => {
+                    const slide = document.createElement('div');
+                    slide.className = 'slide';
+                    const img = document.createElement('img');
+                    img.src = `/comics/${encodeURIComponent(imagePath)}`;
+                    img.draggable = false;
+                    slide.appendChild(img);
+                    track.appendChild(slide);
+                });
+
+                let currentIndex = 0;
+                let isDragging = false;
+                let startX = 0;
+                let currentTranslate = 0;
+                let previousTranslate = 0;
+
+                function setPositionByIndex(animated = true) {
+                    currentTranslate = -currentIndex * window.innerWidth;
+                    if (animated) {
+                        track.style.transition = 'transform 0.3s ease-out';
+                    } else {
+                        track.style.transition = 'none';
+                    }
+                    track.style.transform = `translateX(${currentTranslate}px)`;
+                    updateOverlay(currentIndex, images.length);
+                    previousTranslate = currentTranslate;
+                }
+                
+                function goToNext() {
+                    if (currentIndex < images.length - 1) {
+                        currentIndex++;
+                        setPositionByIndex();
+                    }
+                }
+
+                function goToPrev() {
+                    if (currentIndex > 0) {
+                        currentIndex--;
+                        setPositionByIndex();
+                    }
+                }
+                
+                // 键盘和（隐藏的）按钮导航
+                nextButton.addEventListener('click', goToNext);
+                prevButton.addEventListener('click', goToPrev);
+                document.addEventListener('keydown', (e) => {
+                    if (e.key === 'ArrowLeft') goToPrev();
+                    else if (e.key === 'ArrowRight') goToNext();
+                });
+
+                // 触摸事件
+                imageContainer.addEventListener('touchstart', (e) => {
+                    isDragging = true;
+                    startX = e.touches[0].clientX;
+                    track.style.transition = 'none';
+                }, { passive: true });
+
+                imageContainer.addEventListener('touchmove', (e) => {
+                    if (isDragging) {
+                        const currentPosition = e.touches[0].clientX;
+                        currentTranslate = previousTranslate + currentPosition - startX;
+                        track.style.transform = `translateX(${currentTranslate}px)`;
+                    }
+                }, { passive: true });
+
+                imageContainer.addEventListener('touchend', (e) => {
+                    isDragging = false;
+                    const movedBy = currentTranslate - previousTranslate;
+                    
+                    // 吸附逻辑
+                    if (movedBy < -50 && currentIndex < images.length - 1) {
+                        currentIndex++;
+                    }
+                    if (movedBy > 50 && currentIndex > 0) {
+                        currentIndex--;
+                    }
+                    setPositionByIndex();
+                });
+
+                // 进度条点击跳转
+                progressContainer.addEventListener('click', (e) => {
+                    const rect = progressContainer.getBoundingClientRect();
+                    const clickX = e.clientX - rect.left;
+                    const width = progressContainer.offsetWidth;
+                    const clickPercent = clickX / width;
+                    const targetIndex = Math.floor(clickPercent * images.length);
+                    
+                    // 确保索引在有效范围内
+                    currentIndex = Math.max(0, Math.min(targetIndex, images.length - 1));
+                    setPositionByIndex();
+                });
+
+                // 页码点击跳转
+                pageIndicator.addEventListener('click', (e) => {
+                    e.stopPropagation();
+                    pageText.style.display = 'none';
+                    pageInputContainer.style.display = 'flex';
+                    pageTotal.textContent = images.length;
+                    pageInput.value = currentIndex + 1;
+                    pageInput.focus();
+                    pageInput.select();
+
+                    const handleJump = () => {
+                        let targetPage = parseInt(pageInput.value, 10);
+                        if (!isNaN(targetPage)) {
+                            targetPage = Math.max(1, Math.min(targetPage, images.length));
+                            currentIndex = targetPage - 1;
+                            setPositionByIndex();
+                        }
+                        pageInputContainer.style.display = 'none';
+                        pageText.style.display = 'block';
+                        pageInput.removeEventListener('blur', handleJump);
+                        pageInput.removeEventListener('keydown', handleKeydown);
+                    };
+                    
+                    const handleKeydown = (e) => {
+                        if (e.key === 'Enter') handleJump();
+                        if (e.key === 'Escape') {
+                             pageInputContainer.style.display = 'none';
+                             pageText.style.display = 'block';
+                             pageInput.removeEventListener('blur', handleJump);
+                             pageInput.removeEventListener('keydown', handleKeydown);
+                        }
+                    };
+
+                    pageInput.addEventListener('blur', handleJump);
+                    pageInput.addEventListener('keydown', handleKeydown);
+                });
+
+                updateOverlay(currentIndex, images.length);
+            }
+
+            fetchImages();
+        });
+    </script>
+</body>
+</html>

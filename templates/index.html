@@ -1,0 +1,26 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>局域网漫画阅读器</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>局域网漫画阅读器</h1>
+            <div class="controls">
+                <label for="include-subfolders" class="toggle-switch">
+                    <input type="checkbox" id="include-subfolders">
+                    <span class="slider"></span>
+                    <span class="label-text">直接阅读子文件夹</span>
+                </label>
+            </div>
+            <nav id="breadcrumb"></nav>
+        </header>
+        <main id="file-list" class="file-list-grid"></main>
+    </div>
+    <script src="{{ url_for('static', filename='js/script.js') }}"></script>
+</body>
+</html>
